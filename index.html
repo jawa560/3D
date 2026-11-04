@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新竹東門城 3D</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#9ec9ee;font-family:system-ui,-apple-system,"Noto Sans TC","PingFang TC",sans-serif}
+  #c{display:block;width:100%;height:100%}
+  .hud{position:fixed;left:16px;top:14px;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.55);pointer-events:none}
+  .hud h1{margin:0;font-size:22px;letter-spacing:.08em}
+  .hud p{margin:4px 0 0;font-size:13px;opacity:.9}
+  .bar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:8px;flex-wrap:wrap;justify-content:center;width:calc(100% - 32px);max-width:560px}
+  .bar button{flex:1 1 auto;border:0;border-radius:999px;padding:9px 16px;font-size:14px;background:rgba(255,255,255,.88);color:#222;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+  .bar button.on{background:#c0392b;color:#fff}
+  #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;color:#fff;background:#333;padding:24px;text-align:center}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud"><h1>新竹東門城・迎曦門</h1><p>拖曳旋轉 ・ 滾輪/雙指縮放 ・ 右鍵平移</p></div>
+<div class="bar">
+  <button data-t="day" class="on">白天</button>
+  <button data-t="dusk">黃昏</button>
+  <button data-t="night">夜晚</button>
+  <button id="rot">自動旋轉</button>
+  <button id="car" class="on">車輛行駛</button>
+</div>
+<div id="err">無法載入 Three.js,請檢查網路連線。</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+if (typeof THREE === 'undefined') { document.getElementById('err').style.display = 'flex'; throw new Error('three missing'); }
+
+/* ───────── 小工具 ───────── */
+// 目的:固定亂數種子,讓周邊建物/樹木每次載入位置一致
+let seed = 7;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+// 目的:用 canvas 即時畫貼圖,不用任何圖檔
+function canvasTex(w, h, draw, repeat) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  if (repeat) t.repeat.set(repeat[0], repeat[1]);
+  return t;
+}
+
+/* ───────── renderer / scene / camera ───────── */
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xcfe4f5, 90, 260);
+
+const camera = new THREE.PerspectiveCamera(38, 1, 0.5, 900);
+camera.position.set(11, 5.5, 40);          // 目的:鏡頭位置對照原照片(正面略偏右、低角度仰視)
+const controls = new THREE.OrbitControls(camera, canvas);
+controls.target.set(0, 9, 0);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.495; // 目的:不讓鏡頭鑽到地面以下
+controls.minDistance = 8; controls.maxDistance = 120;
+controls.autoRotateSpeed = 0.7;
+
+/* ───────── 天空(漸層球)+ 雲 ───────── */
+// 目的:天空做成漸層球,旋轉視角時背景仍連續;顏色可隨時段切換
+const skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  uniforms: { top: { value: new THREE.Color(0x3d86d6) }, bot: { value: new THREE.Color(0xcfe4f5) } },
+  vertexShader: 'varying vec3 p;void main(){p=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+  fragmentShader: 'uniform vec3 top;uniform vec3 bot;varying vec3 p;void main(){float h=clamp(normalize(p).y*1.4+.1,0.,1.);gl_FragColor=vec4(mix(bot,top,pow(h,.7)),1.);}'
+});
+const sky = new THREE.Mesh(new THREE.SphereGeometry(600, 32, 16), skyMat);
+scene.add(sky);
+
+// 目的:雲朵用柔邊圓形精靈堆疊,模擬照片裡大片積雲
+const cloudTex = canvasTex(128, 128, (g, w, h) => {
+  const r = g.createRadialGradient(w/2, h/2, 4, w/2, h/2, w/2);
+  r.addColorStop(0, 'rgba(255,255,255,.95)'); r.addColorStop(.6, 'rgba(255,255,255,.45)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r; g.fillRect(0, 0, w, h);
+});
+const cloudGroup = new THREE.Group(); scene.add(cloudGroup);
+const cloudMats = [];
+for (let k = 0; k < 14; k++) {
+  const a = rnd() * Math.PI * 2, d = 300 + rnd() * 140, y = 70 + rnd() * 90;
+  const cx = Math.cos(a) * d, cz = Math.sin(a) * d;
+  for (let j = 0; j < 9; j++) {
+    const m = new THREE.SpriteMaterial({ map: cloudTex, transparent: true, depthWrite: false, fog: false, opacity: .75 });
+    cloudMats.push(m);
+    const s = new THREE.Sprite(m);
+    const sc = 40 + rnd() * 40; s.scale.set(sc * 1.6, sc, 1);
+    s.position.set(cx + (rnd() - .5) * 90, y + (rnd() - .5) * 14, cz + (rnd() - .5) * 60);
+    cloudGroup.add(s);
+  }
+}
+
+/* ───────── 燈光 ───────── */
+// 目的:半球光模擬天空漫射,方向光模擬太陽並產生陰影
+const hemi = new THREE.HemisphereLight(0xcfe6ff, 0x8a7d6a, .75); scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff1d6, 1.15);
+sun.position.set(-30, 45, 35);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 5, far: 160 });
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+
+/* ───────── 材質 ───────── */
+// 目的:台基用砂岩磚貼圖(1 單位 x 0.5 單位的磚塊,隔列錯縫)
+const stoneTex = canvasTex(512, 256, (g, w, h) => {
+  g.fillStyle = '#6b5a3c'; g.fillRect(0, 0, w, h);
+  for (let r = 0; r < 2; r++) for (let c = -1; c < 3; c++) {
+    const x = c * 256 + (r % 2 ? 128 : 0), y = r * 128;
+    const l = 118 + rnd() * 34;
+    g.fillStyle = `rgb(${l + 40},${l + 8},${l - 55})`;
+    g.fillRect(x + 3, y + 3, 250, 122);
+    for (let n = 0; n < 380; n++) {            // 砂岩顆粒
+      const v = (rnd() - .5) * 46;
+      g.fillStyle = `rgba(${l + 40 + v},${l + 8 + v},${l - 55 + v},.5)`;
+      g.fillRect(x + 3 + rnd() * 248, y + 3 + rnd() * 120, 2, 2);
+    }
+  }
+}, [.5, 1]);
+const stoneMat = new THREE.MeshStandardMaterial({ map: stoneTex, roughness: .95 });
+
+// 目的:屋瓦貼圖(橘紅色筒瓦,縱向瓦壟順著屋面坡度)
+const tileTex = canvasTex(256, 64, (g, w, h) => {
+  g.fillStyle = '#c8431a'; g.fillRect(0, 0, w, h);
+  for (let x = 0; x < w; x += 8) {
+    g.fillStyle = 'rgba(90,25,5,.55)'; g.fillRect(x, 0, 2, h);
+    g.fillStyle = 'rgba(255,140,90,.28)'; g.fillRect(x + 3, 0, 2, h);
+  }
+  for (let y = 0; y < h; y += 16) { g.fillStyle = 'rgba(80,20,0,.18)'; g.fillRect(0, y, w, 2); }
+});
+const roofMat = new THREE.MeshStandardMaterial({ map: tileTex, roughness: .7, side: THREE.DoubleSide });
+const M = (color, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: .8 }, o));
+const redMat   = M(0xb3261e, { roughness: .55 });
+const darkRed  = M(0x5c1a16);
+const whiteMat = M(0xeee6d4);
+const blueMat  = M(0x2a4aa0, { roughness: .5 });
+const goldMat  = M(0xd9a441, { roughness: .4, metalness: .3 });
+const lanternMat = M(0xf2efe6, { emissive: 0xffc861, emissiveIntensity: 0 });
+
+const shadowed = (mesh) => { mesh.castShadow = mesh.receiveShadow = true; return mesh; };
+const box = (w, h, d, mat, x, y, z, parent) => {
+  const m = shadowed(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat));
+  m.position.set(x, y, z); (parent || scene).add(m); return m;
+};
+
+/* ───────── 地面:道路 + 圓環島 ───────── */
+// 目的:建立柏油環道、外圍人行道磚與圓環島,讓城門像照片一樣立在島中央
+const ground = new THREE.Mesh(new THREE.CircleGeometry(300, 64),
+  M(0x9a9a98, { roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; ground.receiveShadow = true; scene.add(ground);
+
+const road = new THREE.Mesh(new THREE.RingGeometry(13.5, 25, 96, 1), M(0x464a50, { roughness: .95 }));
+road.rotation.x = -Math.PI / 2; road.receiveShadow = true; scene.add(road);
+
+// 道路白色虛線
+const dashMat = M(0xf1f1f1, { roughness: .9 });
+for (let i = 0; i < 72; i++) {
+  const a = i / 72 * Math.PI * 2;
+  const d = new THREE.Mesh(new THREE.PlaneGeometry(1.8, .22), dashMat);
+  d.rotation.x = -Math.PI / 2; d.rotation.z = -a - Math.PI / 2 + Math.PI;
+  d.position.set(Math.cos(a) * 19.2, .02, Math.sin(a) * 19.2);
+  d.rotation.set(-Math.PI / 2, 0, 0); d.rotateZ(Math.PI / 2 - a);
+  scene.add(d);
+}
+
+// 圓環島:淺色石緣 + 草石地
+const island = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(13.5, 13.8, .5, 64), M(0xcdbf9f, { roughness: .9 })));
+island.position.y = .25; scene.add(island);
+const islandTop = new THREE.Mesh(new THREE.CircleGeometry(12.9, 64), M(0xb9ad92, { roughness: 1 }));
+islandTop.rotation.x = -Math.PI / 2; islandTop.position.y = .51; islandTop.receiveShadow = true; scene.add(islandTop);
+
+/* ───────── 石砌台基(含拱門隧道)───────── */
+// 目的:用 Shape + 擠出做出 16×6.7×10 的石台,並挖出貫穿前後的拱形隧道
+const gate = new THREE.Group(); gate.position.y = .5; scene.add(gate);
+const BW = 16, BH = 6.7, BD = 10;
+{
+  const s = new THREE.Shape();
+  s.moveTo(-BW/2, 0); s.lineTo(BW/2, 0); s.lineTo(BW/2, BH); s.lineTo(-BW/2, BH); s.lineTo(-BW/2, 0);
+  const hole = new THREE.Path();
+  hole.moveTo(-2.3, 0); hole.lineTo(-2.3, 1.8);
+  hole.absarc(0, 1.8, 2.3, Math.PI, 0, true);   // 半圓拱頂
+  hole.lineTo(2.3, 0); hole.lineTo(-2.3, 0);
+  s.holes.push(hole);
+  const geo = new THREE.ExtrudeGeometry(s, { depth: BD, bevelEnabled: false });
+  geo.translate(0, 0, -BD / 2);
+  gate.add(shadowed(new THREE.Mesh(geo, stoneMat)));
+}
+// 拱圈:隧道口加一圈較深色的拱石,讓拱門有層次
+{
+  const arch = new THREE.Shape();
+  arch.absarc(0, 1.8, 2.7, 0, Math.PI, false);
+  arch.lineTo(-2.3, 1.8); arch.absarc(0, 1.8, 2.3, Math.PI, 0, true); arch.lineTo(2.7, 1.8);
+  const ag = new THREE.ExtrudeGeometry(arch, { depth: .12, bevelEnabled: false });
+  const am = M(0xb08e55, { roughness: .9 });
+  [BD / 2, -BD / 2 - .12].forEach(z => { const m = shadowed(new THREE.Mesh(ag, am)); m.position.z = z; gate.add(m); });
+}
+// 隧道內暗處:一盞微弱點光,避免洞內全黑
+const tunnelLight = new THREE.PointLight(0xffd9a0, .35, 9); tunnelLight.position.set(0, 2.5, 0); gate.add(tunnelLight);
+
+// 台基頂的白色檐口與平台
+box(BW + .9, .28, BD + .9, whiteMat, 0, BH + .14, 0, gate);
+box(BW + .3, .22, BD + .3, M(0xd8cdb4), 0, BH - .11, 0, gate);
+box(BW - .2, .18, BD - .2, M(0xb8ab90), 0, BH + .37, 0, gate);
+const FLOOR = BH + .46;   // 城樓地板高度
+
+/* ───────── 歇山重簷屋頂(自訂幾何)───────── */
+// 目的:下半部是「簷角上翹」的四面坡,上半部是兩側山牆的歇山頂。
+//      函式回傳屋頂 Group;參數 W/D=簷口半寬/半深,w2/d2=坡面頂緣半寬/半深,hg=歇山交界高,H=屋脊高,lift=簷角上翹量
+function hipGableRoof({ W, D, w2, d2, hg, H, lift }) {
+  const g = new THREE.Group();
+  const N = 12, ROWS = 8, ring = (hw, hd, lf) => {
+    const pts = [];
+    const E = [[-hw, -hd, hw, -hd], [hw, -hd, hw, hd], [hw, hd, -hw, hd], [-hw, hd, -hw, -hd]];
+    E.forEach(e => { for (let k = 0; k < N; k++) {
+      const u = k / N, m = Math.pow(Math.abs(u - .5) * 2, 3.2);
+      const o = 1 + .06 * m * (lf ? 1 : 0);                      // 簷角略微外翹
+      pts.push(new THREE.Vector3((e[0] + (e[2] - e[0]) * u) * o, lf * m, (e[1] + (e[3] - e[1]) * u) * o));
+    } });
+    return pts;
+  };
+  const bot = ring(W, D, lift), top = ring(w2, d2, 0).map(p => (p.y = hg, p));
+  const total = bot.length, pos = [], uv = [], idx = [];
+  for (let r = 0; r <= ROWS; r++) {
+    const s = r / ROWS, sy = Math.pow(s, 1.5);                    // y 用 1.5 次方 → 屋面呈凹曲線
+    for (let i = 0; i < total; i++) {
+      const a = bot[i], b = top[i];
+      pos.push(a.x + (b.x - a.x) * s, a.y + (b.y - a.y) * sy, a.z + (b.z - a.z) * s);
+      uv.push(i / total * 14, s);
+    }
+  }
+  for (let r = 0; r < ROWS; r++) for (let i = 0; i < total; i++) {
+    const i2 = (i + 1) % total, a = r * total + i, b = r * total + i2, c = (r + 1) * total + i, d = (r + 1) * total + i2;
+    idx.push(a, c, b, b, c, d);
+  }
+  const lg = new THREE.BufferGeometry();
+  lg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  lg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  lg.setIndex(idx); lg.computeVertexNormals();
+  g.add(shadowed(new THREE.Mesh(lg, roofMat)));
+
+  // 上半部:前後兩個長坡面
+  const slope = (sz) => {
+    const gp = new THREE.BufferGeometry();
+    const v = [-w2, hg, sz * d2,  w2, hg, sz * d2,  w2, H, 0,  -w2, H, 0];
+    gp.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+    gp.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 14 * .6, 0, 14 * .6, 1, 0, 1], 2));
+    gp.setIndex(sz > 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2]); gp.computeVertexNormals();
+    return shadowed(new THREE.Mesh(gp, roofMat));
+  };
+  g.add(slope(1), slope(-1));
+  // 山牆三角(白色),並退後一點,讓屋面出簷
+  [1, -1].forEach(sx => {
+    const gp = new THREE.BufferGeometry();
+    gp.setAttribute('position', new THREE.Float32BufferAttribute([0, hg, -d2, 0, hg, d2, 0, H, 0], 3));
+    gp.setIndex([0, 1, 2]); gp.computeVertexNormals();
+    const m = shadowed(new THREE.Mesh(gp, new THREE.MeshStandardMaterial({ color: 0xf0e8d6, side: THREE.DoubleSide, roughness: .8 })));
+    m.position.x = sx * (w2 - .05); g.add(m);
+  });
+  // 藍色屋脊與垂脊、簷口封簷板
+  const tube = (pts, r) => shadowed(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'catmullrom', .3), 24, r, 6, false), blueMat));
+  g.add(tube([new THREE.Vector3(-w2 - .3, H + .08, 0), new THREE.Vector3(w2 + .3, H + .08, 0)], .13));
+  [1, -1].forEach(sx => {
+    g.add(box(.35, .5, .35, blueMat, sx * (w2 + .3), H + .3, 0, g));                    // 鴟吻
+    [1, -1].forEach(sz => {
+      g.add(tube([new THREE.Vector3(sx * w2, hg, sz * d2), new THREE.Vector3(sx * w2, H + .05, 0)], .08));   // 山牆垂脊
+      const cp = [];                                                                       // 戧脊:沿翹角那一排頂點
+            for (let r = 0; r <= ROWS; r++) {
+        const s = r / ROWS, sy = Math.pow(s, 1.5);
+        // 找此角對應的 ring 頂點索引:+x,-z→edge1 起點 N;+x,+z→edge2 起點 2N;-x,+z→3N;-x,-z→0
+        const k = sx > 0 ? (sz < 0 ? N : 2 * N) : (sz > 0 ? 3 * N : 0);
+        const a = bot[k], b = top[k];
+        cp.push(new THREE.Vector3(a.x + (b.x - a.x) * s, a.y + (b.y - a.y) * sy + .03, a.z + (b.z - a.z) * s));
+      }
+      g.add(tube(cp, .09));
+      g.add(box(.18, .18, .18, goldMat, cp[0].x, cp[0].y + .12, cp[0].z, g));            // 角脊小獸
+    });
+  });
+  // 簷口封簷板:沿 bottom ring 下掛一圈藍白相間的窄帶
+  const fp = [], fi = [];
+  bot.forEach(p => { fp.push(p.x, p.y, p.z, p.x, p.y - .28, p.z); });
+  for (let i = 0; i < total; i++) { const j = (i + 1) % total; fi.push(2*i, 2*i+1, 2*j, 2*j, 2*i+1, 2*j+1); }
+  const fg = new THREE.BufferGeometry();
+  fg.setAttribute('position', new THREE.Float32BufferAttribute(fp, 3)); fg.setIndex(fi); fg.computeVertexNormals();
+  g.add(shadowed(new THREE.Mesh(fg, new THREE.MeshStandardMaterial({ color: 0x3a5ab0, side: THREE.DoubleSide, roughness: .6 }))));
+  return g;
+}
+
+/* ───────── 木造城樓:一樓 ───────── */
+// 目的:一樓 = 內牆(暗紅)+ 一圈紅柱 + 柱頭斗拱 + 木格窗,再蓋下層屋頂
+const tower = new THREE.Group(); tower.position.y = gate.position.y; scene.add(tower);
+const CW = 6.4, CD = 3.7, CH = 2.5;                    // 柱列半寬 / 半深 / 柱高
+box(CW * 2 - .5, CH, CD * 2 - .5, darkRed, 0, FLOOR + CH / 2, 0, tower);   // 內牆
+
+// 木格窗:前後面各幾扇
+const latticeTex = canvasTex(64, 64, (g, w, h) => {
+  g.fillStyle = '#3a110e'; g.fillRect(0, 0, w, h);
+  g.strokeStyle = '#c04a2a'; g.lineWidth = 3;
+  for (let i = 0; i <= 64; i += 16) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, h); g.stroke(); g.beginPath(); g.moveTo(0, i); g.lineTo(w, i); g.stroke(); }
+});
+const lat = new THREE.MeshStandardMaterial({ map: latticeTex, roughness: .7 });
+for (let i = -2; i <= 2; i++) [1, -1].forEach(sz => {
+  const w = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), lat);
+  w.position.set(i * 2.3, FLOOR + 1.3, sz * (CD - .24)); if (sz < 0) w.rotation.y = Math.PI; tower.add(w);
+});
+
+const columnPos = [];
+for (let i = 0; i <= 6; i++) { const x = -CW + i * (CW * 2 / 6); columnPos.push([x, CD], [x, -CD]); }
+for (let j = 1; j <= 2; j++) { const z = -CD + j * (CD * 2 / 3); columnPos.push([CW, z], [-CW, z]); }
+const lanterns = [];
+columnPos.forEach(([x, z]) => {
+  const col = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(.19, .21, CH, 14), redMat));
+  col.position.set(x, FLOOR + CH / 2, z); tower.add(col);
+  box(.32, .12, .32, M(0x2a1a14), x, FLOOR + .06, z, tower);                    // 柱礎
+  // 柱頭斗拱:三層漸寬的小方塊
+  box(.5, .14, .5, blueMat, x, FLOOR + CH - .08, z, tower);
+  box(.8, .14, .5, redMat, x, FLOOR + CH + .06, z, tower);
+  box(1.1, .14, .5, blueMat, x, FLOOR + CH + .2, z, tower);
+});
+// 橫樑(額枋)
+box(CW * 2 + .5, .22, .3, blueMat, 0, FLOOR + CH - .02, CD, tower);
+box(CW * 2 + .5, .22, .3, blueMat, 0, FLOOR + CH - .02, -CD, tower);
+box(.3, .22, CD * 2 + .5, blueMat, CW, FLOOR + CH - .02, 0, tower);
+box(.3, .22, CD * 2 + .5, blueMat, -CW, FLOOR + CH - .02, 0, tower);
+
+// 燈籠:掛在前後簷下
+for (let i = -3; i <= 3; i += 2) [1, -1].forEach(sz => {
+  const l = new THREE.Mesh(new THREE.SphereGeometry(.2, 12, 10), lanternMat);
+  l.scale.set(1, 1.3, 1); l.position.set(i * 2.1, FLOOR + CH - .55, sz * (CD + 1.5));
+  tower.add(l); const cap = box(.18, .08, .18, redMat, l.position.x, l.position.y + .32, l.position.z, tower);
+});
+
+// 下層屋頂
+const lowerY = FLOOR + CH + .35;
+const lower = hipGableRoof({ W: 8.8, D: 5.6, w2: 4.4, d2: 2.3, hg: 1.5, H: 2.6, lift: .8 });
+lower.position.y = lowerY; tower.add(lower);
+
+/* ───────── 木造城樓:二樓 ───────── */
+// 目的:二樓比一樓小一圈,白牆紅柱,再蓋上層屋頂
+const F2 = lowerY + 1.7, C2H = 2.5, W2 = 3.7, D2 = 2.1;
+box(W2 * 2 - .3, C2H, D2 * 2 - .3, whiteMat, 0, F2 + C2H / 2, 0, tower);
+[[-W2, D2], [W2, D2], [-W2, -D2], [W2, -D2], [0, D2], [0, -D2], [-W2 / 2, D2], [W2 / 2, D2], [-W2 / 2, -D2], [W2 / 2, -D2]].forEach(([x, z]) => {
+  const c = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(.15, .17, C2H, 12), redMat));
+  c.position.set(x, F2 + C2H / 2, z); tower.add(c);
+  box(.4, .12, .4, blueMat, x, F2 + C2H - .06, z, tower);
+  box(.9, .12, .4, redMat, x, F2 + C2H + .06, z, tower);
+});
+[1, -1].forEach(sz => {
+  [-1.9, 0, 1.9].forEach(x => {                                        // 二樓前後的小窗
+    const w = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.3), lat);
+    w.position.set(x, F2 + 1.2, sz * (D2 - .13)); if (sz < 0) w.rotation.y = Math.PI; tower.add(w);
+  });
+});
+box(W2 * 2 + .4, .2, .28, blueMat, 0, F2 + C2H, D2, tower);
+box(W2 * 2 + .4, .2, .28, blueMat, 0, F2 + C2H, -D2, tower);
+
+const upperY = F2 + C2H + .25;
+const upper = hipGableRoof({ W: 6.8, D: 4.4, w2: 3.3, d2: 1.6, hg: 1.3, H: 2.3, lift: .7 });
+upper.position.y = upperY; tower.add(upper);
+// 屋頂寶珠
+
+/* ───────── 圓環島配件:鐵鍊柱 / 石椅 / 路燈 ───────── */
+// 目的:呼應照片前景的鍊條護欄與石椅
+const postMat = M(0xcfc3a4);
+const RP = 11.8, NP = 28, posts = [];
+for (let i = 0; i < NP; i++) {
+  const a = i / NP * Math.PI * 2;
+  const p = new THREE.Vector3(Math.cos(a) * RP, .5, Math.sin(a) * RP); posts.push(p);
+  box(.22, .75, .22, postMat, p.x, .5 + .375, p.z);
+}
+const chainMat = new THREE.LineBasicMaterial({ color: 0xeeeeee });
+for (let i = 0; i < NP; i++) {
+  const a = posts[i], b = posts[(i + 1) % NP], pts = [];
+  for (let t = 0; t <= 8; t++) { const f = t / 8; pts.push(new THREE.Vector3(a.x + (b.x - a.x) * f, 1.15 - Math.sin(f * Math.PI) * .22, a.z + (b.z - a.z) * f)); }
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), chainMat));
+}
+for (let i = 0; i < 10; i++) {                                        // 石椅
+  const a = (i / 10) * Math.PI * 2 + .15, r = 9.6;
+  const b = box(2.0, .5, .6, M(0xcbbd9b), Math.cos(a) * r, .75, Math.sin(a) * r);
+  b.rotation.y = -a + Math.PI / 2;
+}
+
+/* ───────── 樹木 ───────── */
+// 目的:右側棕櫚樹(照片右側)+ 道路外圈的行道樹,增加場景深度
+const green = [M(0x4f8a3a), M(0x5f9a45), M(0x3f7a32)];
+function roundTree(x, z, s = 1) {
+  const t = new THREE.Group(); t.position.set(x, 0, z); t.scale.setScalar(s);
+  const tr = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(.2, .3, 3, 8), M(0x5a4030))); tr.position.y = 1.5; t.add(tr);
+  for (let i = 0; i < 4; i++) {
+    const b = shadowed(new THREE.Mesh(new THREE.IcosahedronGeometry(1.5 + rnd() * .9, 1), green[i % 3]));
+    b.position.set((rnd() - .5) * 2, 3.8 + rnd() * 1.8, (rnd() - .5) * 2); t.add(b);
+  }
+  scene.add(t); return t;
+}
+function palm(x, z, h = 8) {
+  const t = new THREE.Group(); t.position.set(x, 0, z);
+  const tr = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(.22, .34, h, 8), M(0x7b6648))); tr.position.y = h / 2; tr.rotation.z = .05; t.add(tr);
+  const leaf = M(0x3c7d2e, { side: THREE.DoubleSide });
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12 * Math.PI * 2;
+    const f = shadowed(new THREE.Mesh(new THREE.PlaneGeometry(.7, 4.2, 1, 5), leaf));
+    const pa = f.geometry.attributes.position;
+    for (let k = 0; k < pa.count; k++) { const y = pa.getY(k) + 2.1; pa.setZ(k, -.0018 * y * y * 1.2 * 6); }  // 讓葉片下垂
+    f.geometry.computeVertexNormals();
+    f.geometry.translate(0, 2.1, 0);
+    f.position.set(0, h, 0);
+    f.rotation.order = 'YXZ'; f.rotation.y = a; f.rotation.x = Math.PI / 2.2 - .15 * (i % 2);
+    t.add(f);
+  }
+  scene.add(t);
+}
+palm(17.5, -4.5, 8.5);
+palm(-17, -14, 7);
+for (let i = 0; i < 20; i++) {
+  const a = i / 20 * Math.PI * 2 + .1, r = 27.5;
+  if (Math.abs(Math.atan2(Math.sin(a - 1.3), Math.cos(a - 1.3))) < .6) continue;   // 目的:預設鏡頭正前方不種樹
+  if (i % 4 === 0) palm(Math.cos(a) * r, Math.sin(a) * r, 6 + rnd() * 2);
+  else roundTree(Math.cos(a) * r, Math.sin(a) * r, .9 + rnd() * .4);
+}
+
+/* ───────── 周邊建物 ───────── */
+// 目的:左側複製照片裡的招牌大樓(「良心製衣」白底招牌、紅色看板、Hi-K),其餘建物環繞一圈
+function signTex(text, bg, fg, font = 'bold 120px "Noto Sans TC","PingFang TC",sans-serif') {
+  return canvasTex(512, 256, (g, w, h) => {
+    g.fillStyle = bg; g.fillRect(0, 0, w, h);
+    g.fillStyle = fg; g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(text, w / 2, h / 2 + 6);
+  });
+}
+const winTex = (base) => canvasTex(128, 128, (g, w, h) => {
+  g.fillStyle = base; g.fillRect(0, 0, w, h);
+  for (let y = 12; y < h; y += 42) for (let x = 10; x < w; x += 40) { g.fillStyle = '#7fa0b8'; g.fillRect(x, y, 26, 26); g.fillStyle = 'rgba(0,0,0,.2)'; g.fillRect(x, y + 22, 26, 4); }
+});
+const winMats = [], signMats = [];
+function building(x, z, w, h, d, color, face = 0) {
+  const t = winTex(color);
+  t.repeat.set(Math.max(1, Math.round(w / 4)), Math.max(1, Math.round(h / 4)));
+  const m = new THREE.MeshStandardMaterial({ map: t, roughness: .85, emissive: 0xffd48a, emissiveIntensity: 0, emissiveMap: t });
+  winMats.push(m);
+  const b = box(w, h, d, m, x, h / 2, z); b.rotation.y = face;
+  box(w + .4, .4, d + .4, M(0xd0cbc0), x, h + .2, z).rotation.y = face;
+  return b;
+}
+function signBoard(tex, w, h, x, y, z, ry = 0) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: tex, roughness: .6, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0 }));
+  m.position.set(x, y, z); m.rotation.y = ry; scene.add(m); signMats.push(m.material); return m;
+}
+// 左側前景建物群(對照照片)
+building(-34, 8, 11, 8, 14, '#d9d3c8');
+building(-42, -6, 10, 11, 12, '#c9372d');
+building(-31, -12, 10, 13, 13, '#e6e1d6');
+signBoard(signTex('良心製衣', '#f4f1ea', '#222'), 8.6, 4.3, -31, 9.2, -5.4);
+signBoard(signTex('Hi-K', '#b01f3a', '#fff', 'bold 130px sans-serif'), 6, 3, -34, 5.2, 15.1);
+signBoard(signTex('服飾 百貨', '#c0392b', '#fff2cc', 'bold 100px "Noto Sans TC",sans-serif'), 7, 3.5, -42, 6, 0.2);
+// 右側大樓
+building(36, -4, 9, 10, 12, '#8b5a44');
+building(34, 12, 10, 7, 9, '#d7cfbf');
+// 環繞外圈:隨機高度建物(讓 360° 旋轉都有背景)
+const palette = ['#cfc3ab', '#c4b79c', '#b3a995', '#d6c9ae', '#a39a88', '#bfae93', '#cdb89b', '#b8503f'];
+for (let i = 0; i < 46; i++) {
+  const a = i / 46 * Math.PI * 2 + rnd() * .1, r = 52 + rnd() * 30;
+  const x = Math.cos(a) * r, z = Math.sin(a) * r;
+  if (x < -22 && x > -48 && z > -18 && z < 18) continue;       // 避開上面手工建物
+  if (x > 28 && x < 44 && z > -14 && z < 18) continue;
+  building(x, z, 8 + rnd() * 8, 6 + rnd() * 12, 8 + rnd() * 8, palette[i % palette.length], -a);
+}
+
+/* ───────── 汽車 ───────── */
+// 目的:照片右側有一輛銀色小車,做成沿環道緩慢行駛的動態元素
+const car = new THREE.Group();
+box(4.2, .8, 1.8, M(0xc9ccd2, { metalness: .5, roughness: .35 }), 0, .8, 0, car);
+box(2.3, .75, 1.65, M(0x28323c, { metalness: .6, roughness: .2 }), -.2, 1.5, 0, car);
+box(2.2, .55, 1.7, M(0xc9ccd2, { metalness: .5, roughness: .35 }), -.2, 1.95, 0, car);
+[[1.3, .85], [-1.3, .85], [1.3, -.85], [-1.3, -.85]].forEach(([x, z]) => {
+  const w = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(.38, .38, .3, 14), M(0x111111)));
+  w.rotation.x = Math.PI / 2; w.position.set(x, .38, z); car.add(w);
+});
+const head = new THREE.PointLight(0xfff0c0, 0, 14); head.position.set(2.2, 1, 0); car.add(head);
+scene.add(car);
+let carAng = .28, carOn = true;
+
+/* ───────── 時段切換 ───────── */
+// 目的:白天/黃昏/夜晚三組參數;夜晚點亮燈籠、窗戶、招牌與城樓補光
+const lightsAtNight = [];
+[[-5, 1, 6.5], [5, 1, 6.5], [0, 6, 6]].forEach(p => {
+  const l = new THREE.PointLight(0xffb866, 0, 24); l.position.set(p[0], p[1] + 8, p[2]); scene.add(l); lightsAtNight.push(l);
+});
+const TIMES = {
+  day:   { top: 0x3d86d6, bot: 0xcfe4f5, fog: 0xcfe4f5, hemi: .75, sun: 1.15, sunCol: 0xfff1d6, sunPos: [-30, 45, 35], glow: 0, cloud: .75, hc: 0xcfe6ff },
+  dusk:  { top: 0x4a5f9c, bot: 0xf2a56b, fog: 0xe8b48c, hemi: .5,  sun: .8,   sunCol: 0xff9a52, sunPos: [-55, 14, 25], glow: .5, cloud: .8, hc: 0xffd2b0 },
+  night: { top: 0x070b24, bot: 0x2b3560, fog: 0x1c2447, hemi: .22, sun: .12,  sunCol: 0x8aa0ff, sunPos: [20, 40, 20], glow: 1, cloud: .12, hc: 0x7d8fe0 }
+};
+function setTime(k) {
+  const t = TIMES[k];
+  skyMat.uniforms.top.value.setHex(t.top); skyMat.uniforms.bot.value.setHex(t.bot);
+  scene.fog.color.setHex(t.fog); hemi.intensity = t.hemi; hemi.color.setHex(t.hc);
+  sun.intensity = t.sun; sun.color.setHex(t.sunCol); sun.position.set(...t.sunPos);
+  lanternMat.emissiveIntensity = t.glow * 1.6;
+  winMats.forEach(m => m.emissiveIntensity = t.glow * .6);
+  signMats.forEach(m => m.emissiveIntensity = t.glow * .9);
+  lightsAtNight.forEach(l => l.intensity = t.glow * 0.9);
+  head.intensity = k === 'night' ? 1.2 : 0;
+  cloudMats.forEach(m => m.opacity = t.cloud);
+  document.querySelectorAll('[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === k));
+}
+document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => setTime(b.dataset.t));
+const rotBtn = document.getElementById('rot'), carBtn = document.getElementById('car');
+rotBtn.onclick = () => { controls.autoRotate = !controls.autoRotate; rotBtn.classList.toggle('on', controls.autoRotate); };
+carBtn.onclick = () => { carOn = !carOn; carBtn.classList.toggle('on', carOn); };
+
+/* ───────── 迴圈 / 縮放 ───────── */
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+const clock = new THREE.Clock();
+function tick() {
+  const dt = clock.getDelta();
+  if (carOn) carAng += dt * .05;
+  car.position.set(Math.cos(carAng) * 21.4, 0, Math.sin(carAng) * 21.4);
+  car.rotation.y = -(carAng + Math.PI / 2);
+  cloudGroup.rotation.y += dt * .002;
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+setTime('day'); tick();
+window.__ready = true;
+</script>
+</body>
+</html>
