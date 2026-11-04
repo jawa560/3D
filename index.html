@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新竹東門城 3D</title>
+<style>
+  :root { --panel: rgba(255,255,255,.92); --ink: #222; --accent: #a3271b; }
+  html, body { margin: 0; height: 100%; font-family: system-ui, "Noto Sans TC", sans-serif; color: var(--ink); background: #bfd7ee; }
+  #view { width: 100%; height: 100%; display: block; touch-action: none; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 340px; max-height: calc(100% - 24px); overflow: auto;
+           background: var(--panel); border-radius: 12px; box-shadow: 0 4px 18px rgba(0,0,0,.18); padding: 14px 16px; box-sizing: border-box; }
+  #panel.collapsed ol { display: none; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  .sub { font-size: 12px; color: #666; margin: 0 0 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  button { font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid #c9c2b4; background: #fff; border-radius: 8px; cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  label { font-size: 13px; margin-right: 10px; }
+  ol { padding-left: 20px; margin: 8px 0 0; font-size: 13px; line-height: 1.5; }
+  li { margin-bottom: 6px; }
+  li b { color: var(--accent); }
+  .hint { font-size: 12px; color: #666; margin-top: 8px; }
+  @media (max-width: 600px) { #panel { width: calc(100% - 24px); max-height: 46%; } }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="panel" class="collapsed">
+  <h1>新竹東門城（迎曦門）程式化 3D 模型</h1>
+  <p class="sub">滑鼠拖曳旋轉、滾輪縮放、右鍵平移。</p>
+  <div class="row">
+    <button data-view="corner">斜角</button>
+    <button data-view="front">正面</button>
+    <button data-view="side">側面</button>
+    <button data-view="top">俯視</button>
+    <button data-view="under">仰視簷口</button>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="rotate"> 自動旋轉</label>
+    <label><input type="checkbox" id="env" checked> 顯示周邊</label>
+    <label><input type="checkbox" id="wire"> 線框</label>
+  </div>
+  <div class="row">
+    <button class="primary" id="export">匯出 GLB</button>
+    <button id="toggle-steps">建模步驟與目的</button>
+  </div>
+  <ol>
+    <li><b>城台</b>：用帶拱洞的 2D 剖面擠出，一次得到正、背面與拱洞內壁；頂點依高度內縮做收分。目的：避免 CSG，又能得到真實的門洞與下寬上窄的牆身。</li>
+    <li><b>白色女牆帶與壓頂</b>：兩個方盒。目的：對應照片石台上方的白色粉刷帶，並作為城樓地坪。</li>
+    <li><b>下層柱廊</b>：外圈紅柱、石柱礎、木板欄杆（正面中央留門）、額枋與藍色眉板。目的：重現開放式柱廊的層次，並為屋簷提供承托。</li>
+    <li><b>下層腰簷</b>：四片參數曲面，高度用 v<sup>p</sup> 做凹弧，簷角用 |2u−1|<sup>k</sup> 翹起。目的：中式屋面不是平面，這兩個函數就能得到反宇與燕尾翹角。</li>
+    <li><b>上層樓閣</b>：米白牆、格子窗、貼牆紅柱、迴廊直櫺欄杆。目的：與下層開放柱廊形成封閉／開放的對比，符合照片。</li>
+    <li><b>歇山頂</b>：前後坡到正脊，左右坡截斷在 55% 高度，上方補山花；正脊兩端以 |t|<sup>4</sup> 上翹成燕尾。目的：歇山頂是這座城樓最具辨識度的輪廓。</li>
+    <li><b>周邊</b>：地坪、石台基座、石樁鐵鏈、馬路。目的：給模型尺度感，可用上方開關隱藏。</li>
+  </ol>
+  <p class="hint">所有比例集中在 <code>src/gate.js</code> 的參數表 <code>P</code>，改數字即可調整。</p>
+</div>
+<script src="lib/three-bundle.js"></script>
+<script src="src/gate.js"></script>
+<script src="src/main.js"></script>
+</body>
+</html>
