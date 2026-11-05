@@ -1,0 +1,298 @@
+<title>迎曦門 Blender 版</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;900&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+  /* 版面：單欄長頁，像一張建築圖冊——照片對照、可旋轉模型、施工階段、細部。 */
+  :root {
+    --bg: #f3efe7;            /* 砂岩紙色 */
+    --surface: #fbf9f4;
+    --fg: #29221d;
+    --muted: #6d6158;
+    --line: rgba(41, 34, 29, 0.14);
+    --vermilion: #b3261e;     /* 柱 */
+    --cobalt: #23509f;        /* 樑枋、脊 */
+    --sand: #cdb88c;          /* 城台 */
+    --stage: #dfe7ee;         /* 3D 畫布底色 */
+    --font-display: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
+    --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1815; --surface: #24201c; --fg: #efe8de; --muted: #a99d91; --line: rgba(239, 232, 222, 0.14);
+      --vermilion: #e0503f; --cobalt: #7c9fe0; --sand: #d6c39a; --stage: #20262d; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b1815; --surface: #24201c; --fg: #efe8de; --muted: #a99d91; --line: rgba(239, 232, 222, 0.14);
+    --vermilion: #e0503f; --cobalt: #7c9fe0; --sand: #d6c39a; --stage: #20262d; color-scheme: dark;
+  }
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.65; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 64px; display: grid; gap: 56px; }
+  header { display: grid; gap: 14px; }
+  .eyebrow { font-size: 12px; letter-spacing: 0.2em; color: var(--muted); margin: 0; }
+  h1 { font-family: var(--font-display); font-weight: 900; font-size: clamp(34px, 6vw, 60px); line-height: 1.1; margin: 0; letter-spacing: 0.06em; text-wrap: balance; }
+  h1 em { font-style: normal; color: var(--vermilion); }
+  .lede { max-width: 62ch; margin: 0; color: var(--fg); }
+  .facts { display: flex; flex-wrap: wrap; gap: 10px 28px; margin: 6px 0 0; padding: 14px 0 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .facts div { display: grid; }
+  .facts dt { font-size: 12px; color: var(--muted); letter-spacing: 0.08em; }
+  .facts dd { margin: 0; font-family: var(--font-display); font-size: 24px; font-weight: 600; }
+  section { display: grid; gap: 16px; min-width: 0; }
+  h2 { font-family: var(--font-display); font-size: 26px; font-weight: 600; margin: 0; letter-spacing: 0.05em; display: flex; align-items: baseline; gap: 12px; text-wrap: balance; }
+  h2 small { font-family: var(--font-body); font-size: 13px; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+  p.note { margin: 0; color: var(--muted); max-width: 70ch; }
+
+  /* 照片對照 */
+  .compare { position: relative; width: 100%; max-width: 100%; aspect-ratio: 3 / 2; overflow: hidden; border-radius: 4px; background: var(--stage); user-select: none; touch-action: pan-y; }
+  .compare img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; max-width: none; }
+  .compare .top { clip-path: inset(0 calc(100% - var(--pos, 50%)) 0 0); }
+  .compare .handle { position: absolute; top: 0; bottom: 0; left: var(--pos, 50%); width: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.25); transform: translateX(-1px); pointer-events: none; }
+  .compare .handle::after { content: "⟷"; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 38px; height: 38px; border-radius: 50%; background: #fff; color: #29221d; display: grid; place-items: center; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+  .compare .tag { position: absolute; top: 12px; padding: 3px 9px; font-size: 12px; border-radius: 3px; background: rgba(20, 17, 15, 0.7); color: #fff; pointer-events: none; }
+  .compare .tag.l { left: 12px; } .compare .tag.r { right: 12px; }
+  .compare input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: ew-resize; margin: 0; }
+  .compare input:focus-visible + .handle { box-shadow: 0 0 0 3px var(--cobalt); }
+
+  /* 3D */
+  .viewer { position: relative; width: 100%; max-width: 100%; aspect-ratio: 16 / 9; border-radius: 4px; overflow: hidden; background: var(--stage); }
+  .viewer canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+  .viewer .status { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; pointer-events: none; text-align: center; padding: 16px; }
+  .viewer .status[hidden] { display: none; }
+  .viewer .bar { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; font-size: 13px; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--fg); }
+  button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+  .viewer .hint { position: absolute; right: 12px; bottom: 12px; font-size: 12px; color: var(--muted); background: var(--surface); padding: 4px 8px; border-radius: 3px; }
+
+  /* 施工階段 */
+  .phases { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+  .phases figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+  .phases figure img { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 4px; background: var(--stage); }
+  .ctrl { display: flex; align-items: center; gap: 12px; }
+  .ctrl input { flex: 1; accent-color: var(--vermilion); }
+  .ctrl output { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); min-width: 5.5em; text-align: right; }
+  .phase-now h3 { font-family: var(--font-display); margin: 0; font-size: 20px; }
+  .phase-now p { margin: 4px 0 0; }
+  .phase-now .rng { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  ol.plist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-variant-numeric: tabular-nums; }
+  ol.plist li { display: grid; grid-template-columns: 1.8em 1fr auto; gap: 8px; padding: 6px 8px; border-radius: 4px; cursor: pointer; align-items: baseline; }
+  ol.plist li:hover { background: var(--line); }
+  ol.plist li[aria-current="true"] { background: var(--fg); color: var(--bg); }
+  ol.plist li[aria-current="true"] .n { color: var(--bg); }
+  ol.plist .i { color: var(--muted); font-size: 12px; }
+  ol.plist li[aria-current="true"] .i { color: var(--bg); }
+  ol.plist .n { font-size: 12px; color: var(--muted); }
+  .bars { display: flex; height: 8px; border-radius: 2px; overflow: hidden; margin-top: 4px; }
+  .bars i { display: block; height: 100%; }
+
+  /* 細部 */
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .grid2 figure { margin: 0; display: grid; gap: 6px; }
+  .grid2 img { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 4px; background: var(--stage); }
+  figcaption { font-size: 13px; color: var(--muted); }
+  footer { border-top: 1px solid var(--line); padding-top: 16px; color: var(--muted); font-size: 13px; display: grid; gap: 4px; }
+  code { font-size: 12px; background: var(--line); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+
+  @media (max-width: 760px) {
+    .phases, .grid2 { grid-template-columns: minmax(0, 1fr); }
+    .viewer { aspect-ratio: 4 / 5; }
+    .wrap { gap: 44px; padding-block: 24px 48px; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">新竹東門城 · 迎曦門 · Blender 5.0 程序化重建</p>
+    <h1>迎曦門 <em>Blender</em> 版</h1>
+    <p class="lede">以 Python 腳本驅動 Blender，從夯土核心開始，一塊石、一片瓦、一根椽地把城門重新蓋起來。不設步數上限：每放上一個構件就記一步，最後以 Cycles 算圖。</p>
+    <dl class="facts">
+      <div><dt>建造步驟</dt><dd>/*TOTAL*/</dd></div>
+      <div><dt>施工階段</dt><dd>12</dd></div>
+      <div><dt>筒瓦</dt><dd>/*TILES*/ 片</dd></div>
+      <div><dt>台座砂岩</dt><dd>/*STONES*/ 塊</dd></div>
+      <div><dt>城台尺寸</dt><dd>19.6 × 10.6 × 7.04 m</dd></div>
+    </dl>
+  </header>
+
+  <section aria-labelledby="h-compare">
+    <h2 id="h-compare">照片對照 <small>拖曳中線比較原照片與 Blender 算圖</small></h2>
+    <div class="compare" id="compare" style="--pos: 50%">
+      <img src="photo_angle.jpg" alt="Blender 算圖：與照片相同視角的迎曦門" loading="eager">
+      <img class="top" src="reference.jpg" alt="參考照片：新竹東門城迎曦門" loading="eager">
+      <span class="tag l">參考照片</span><span class="tag r">Blender 算圖</span>
+      <input type="range" id="cmp" min="0" max="100" value="50" aria-label="照片與算圖的分界位置">
+      <span class="handle"></span>
+    </div>
+    <p class="note">相機依照片推算：30 mm 鏡頭、離地 1.6 m 水平拍攝並向上位移畫面，讓城門垂直線保持垂直。比例以台座 16 層石、高 7.04 m 為基準量測。</p>
+  </section>
+
+  <section aria-labelledby="h-3d">
+    <h2 id="h-3d">可旋轉模型 <small>由 Blender 匯出的 glTF，經 Draco 壓縮</small></h2>
+    <div class="viewer" id="viewer">
+      <canvas id="c" aria-label="迎曦門 3D 模型"></canvas>
+      <div class="status" id="status">正在載入模型…</div>
+      <div class="bar">
+        <button id="v-front">照片視角</button>
+        <button id="v-aerial">鳥瞰</button>
+        <button id="v-spin" aria-pressed="true">自動旋轉</button>
+      </div>
+      <span class="hint">拖曳旋轉 · 滾輪或雙指縮放</span>
+    </div>
+    <p class="note">網頁版為了載入速度拿掉了石塊倒角、程序化紋理與周邊街屋，材質只保留底色。完整細節請看算圖或開啟 <code>east_gate.blend</code>。</p>
+  </section>
+
+  <section aria-labelledby="h-phase">
+    <h2 id="h-phase">施工過程 <small>每個階段結束時的狀態</small></h2>
+    <div class="phases">
+      <figure>
+        <img id="ph-img" src="phase_12.jpg" alt="施工階段算圖">
+        <div class="ctrl">
+          <input type="range" id="ph" min="1" max="12" value="12" aria-label="施工階段">
+          <output id="ph-out" for="ph">12 / 12</output>
+        </div>
+        <div class="phase-now" aria-live="polite">
+          <h3 id="ph-title"></h3>
+          <p class="rng" id="ph-rng"></p>
+          <p id="ph-note"></p>
+        </div>
+      </figure>
+      <div>
+        <ol class="plist" id="plist"></ol>
+        <div class="bars" id="bars" aria-hidden="true"></div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-detail">
+    <h2 id="h-detail">細部</h2>
+    <div class="grid2">
+      <figure><img src="aerial.jpg" alt="鳥瞰算圖" loading="lazy"><figcaption>鳥瞰：歇山頂的山花與博風、下層腰簷四角翹起、廣場石柱鏈欄。</figcaption></figure>
+      <figure><img src="roof_corner.jpg" alt="翹角特寫算圖" loading="lazy"><figcaption>翹角特寫：筒瓦逐片鋪設，簷口有瓦當與滴水，下方是椽頭、挑簷枋與出跳斗栱。</figcaption></figure>
+    </div>
+  </section>
+
+  <footer>
+    <span>原始檔在 repo 的 <code>east-gate-blender/</code>：建模腳本 <code>build_gate.py</code>、場景 <code>out/east_gate.blend</code>、完整步驟 <code>out/steps.csv</code>。</span>
+    <span>依單張照片推估重建，背面與側面為對稱推測，非實測圖。</span>
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="model.js"></script>
+<script>
+(function () {
+  'use strict';
+  var PHASES = /*PHASES*/[];
+  var COLORS = ['#b8ad98', '#d9c79e', '#cbb68a', '#b9b1a0', '#e6e0d2', '#b02a1f', '#23509f', '#d95b22', '#e9e3d4', '#2b8f86', '#c24d1c', '#5f8f45'];
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // 照片對照
+  var cmp = document.getElementById('cmp'), box = document.getElementById('compare');
+  cmp.addEventListener('input', function () { box.style.setProperty('--pos', cmp.value + '%'); });
+
+  // 施工階段
+  var img = document.getElementById('ph-img'), ph = document.getElementById('ph'), out = document.getElementById('ph-out');
+  var title = document.getElementById('ph-title'), rng = document.getElementById('ph-rng'), note = document.getElementById('ph-note');
+  var plist = document.getElementById('plist'), bars = document.getElementById('bars');
+  var total = PHASES.reduce(function (a, p) { return a + p.count; }, 0);
+  PHASES.forEach(function (p, i) {
+    var li = document.createElement('li'); li.tabIndex = 0;
+    li.innerHTML = '<span class="n">' + (i + 1) + '</span><span>' + p.name + '</span><span class="i">' + p.count.toLocaleString() + ' 步</span>';
+    li.addEventListener('click', function () { setPhase(i + 1); });
+    li.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPhase(i + 1); } });
+    plist.appendChild(li);
+    var b = document.createElement('i'); b.style.width = (p.count / total * 100) + '%'; b.style.background = COLORS[i]; b.title = p.name; bars.appendChild(b);
+    var pre = new Image(); pre.src = 'phase_' + String(i + 1).padStart(2, '0') + '.jpg';
+  });
+  function setPhase(n) {
+    var p = PHASES[n - 1];
+    ph.value = n; out.textContent = n + ' / ' + PHASES.length;
+    img.src = 'phase_' + String(n).padStart(2, '0') + '.jpg';
+    img.alt = '第 ' + n + ' 階段「' + p.name + '」完成時的算圖';
+    title.textContent = '第 ' + n + ' 階段　' + p.name;
+    rng.textContent = '步驟 ' + p.from.toLocaleString() + '–' + p.to.toLocaleString() + '，共 ' + p.count.toLocaleString() + ' 步';
+    note.textContent = p.note;
+    Array.prototype.forEach.call(plist.children, function (li, i) { li.setAttribute('aria-current', i === n - 1 ? 'true' : 'false'); });
+  }
+  ph.addEventListener('input', function () { setPhase(+ph.value); });
+  setPhase(12);
+
+  // 3D 檢視
+  var canvas = document.getElementById('c'), status = document.getElementById('status');
+  if (!window.THREE || !THREE.GLTFLoader) { status.textContent = '無法載入 3D 函式庫，請改看下方算圖。'; return; }
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xcfdceb);
+  scene.fog = new THREE.Fog(0xcfdceb, 120, 420);
+  var camera = new THREE.PerspectiveCamera(36, 16 / 9, 0.5, 2000);
+  scene.add(new THREE.HemisphereLight(0xe4eeff, 0x8b7f6c, 0.75));
+  // glTF 為 Y 向上，Blender 的 -Y（城門正面）變成 +Z
+  var sun = new THREE.DirectionalLight(0xfff2e0, 1.6); sun.position.set(-38, 95, 62); scene.add(sun);
+  var controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = true; controls.target.set(0, 8, 0);
+  controls.maxPolarAngle = Math.PI * 0.495; controls.minDistance = 8; controls.maxDistance = 220;
+  var spinBtn = document.getElementById('v-spin');
+  controls.autoRotate = !reduced; controls.autoRotateSpeed = 0.6;
+  spinBtn.setAttribute('aria-pressed', String(controls.autoRotate));
+  spinBtn.addEventListener('click', function () { controls.autoRotate = !controls.autoRotate; spinBtn.setAttribute('aria-pressed', String(controls.autoRotate)); });
+  function view(pos, tgt) { camera.position.set(pos[0], pos[1], pos[2]); controls.target.set(tgt[0], tgt[1], tgt[2]); controls.autoRotate = false; spinBtn.setAttribute('aria-pressed', 'false'); }
+  document.getElementById('v-front').addEventListener('click', function () { view([1.2, 1.8, 44], [1.2, 8.6, 0]); });
+  document.getElementById('v-aerial').addEventListener('click', function () { view([-34, 23, 38], [0.5, 7.2, 0]); });
+  camera.position.set(-34, 23, 38);
+
+  var draco = new THREE.DRACOLoader();
+  draco.setDecoderPath('draco/');
+  draco.setDecoderConfig({ type: 'js' });
+  var loader = new THREE.GLTFLoader();
+  loader.setDRACOLoader(draco);
+  function onModel(g) {
+    g.scene.traverse(function (o) {
+      if (o.isMesh && o.material) {
+        var ms = Array.isArray(o.material) ? o.material : [o.material];
+        ms.forEach(function (m) { m.side = THREE.DoubleSide; if (m.metalness > 0.5) m.metalness = 0.6; });
+      }
+    });
+    scene.add(g.scene);
+    status.hidden = true;
+  }
+  function onFail(err) {
+    status.textContent = '模型載入失敗，請改看下方算圖。';
+    console.error(err);
+  }
+  // 模型以 base64 內嵌於 model.js（artifact 不提供 .glb 檔）；沒有時改讀同目錄的 east_gate.glb
+  if (window.GATE_GLB_B64) {
+    try {
+      var bin = atob(window.GATE_GLB_B64), buf = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      loader.parse(buf.buffer, '', onModel, onFail);
+    } catch (e) { onFail(e); }
+  } else {
+    loader.load('east_gate.glb', onModel, function (e) {
+      if (e.total) status.textContent = '正在載入模型… ' + Math.round(e.loaded / e.total * 100) + '%';
+    }, onFail);
+  }
+
+  function resize() {
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== Math.floor(w * renderer.getPixelRatio()) || canvas.height !== Math.floor(h * renderer.getPixelRatio())) {
+      renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+    }
+  }
+  var visible = true;
+  if ('IntersectionObserver' in window) new IntersectionObserver(function (es) { visible = es[0].isIntersecting; }).observe(canvas);
+  (function loop() {
+    requestAnimationFrame(loop);
+    if (!visible) return;
+    resize(); controls.update(); renderer.render(scene, camera);
+  })();
+})();
+</script>
